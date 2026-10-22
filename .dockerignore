@@ -1,0 +1,9 @@
+.venv/
+.git/
+data/
+runs/
+artifacts/
+ray_results/
+ray_tune/
+**/__pycache__/
+*.egg-info/

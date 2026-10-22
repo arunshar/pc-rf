@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Model artifacts and local data
+artifacts/
+*.onnx
+*.onnx.data
+*.pt
+*.pt2
+*.pth
+*.engine
+*.ckpt
+data/
+checkpoints/
+ckpt/
+runs/
+logs/
+
+# Local outputs
+ray_results/
+ray_tune/
+scale_runs/
+results/
+.coverage
+coverage.xml
+htmlcov/
+*.nc
+*.npz
+
+# Secrets
+.env
+.env.*
+.netrc
+.cdsapirc
+*.pem
+*.key
+
+# OS
+.DS_Store

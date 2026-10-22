@@ -1,0 +1,69 @@
+# PC-RF Ray Serve downscaler image.
+#
+# This is the SERVING image (Ray Serve + onnxruntime + the pcrf package). It is
+# distinct from apps/training/Dockerfile, which is the lightweight FastAPI mock
+# (serve_mock.py) used for local trials. Use THIS one to run the
+# autoscaling, dynamic-batching Ray Serve app (apps/training/serve_ray.py).
+#
+# Build context MUST be the REPO ROOT (the image needs src/pcrf + pyproject.toml
+# and the apps/training serve scripts):
+#
+#   # Docker (laptop / CI / cloud):
+#   docker build -f apps/training/Dockerfile.serve -t pcrf-serve:cpu .
+#
+#   # On a cluster without a Docker daemon, convert this image with Apptainer or
+#   # Podman. The base below is CPU-only; for GPU serving build from a CUDA Ray
+#   # base instead (see the ARG note).
+#
+# The Ray version is pinned so serve autoscaling keys (target_ongoing_requests)
+# and @serve.batch setters behave the same locally and on a managed Ray service.
+#
+# GPU note: this CPU base keeps the image small and runs the 7.6M-param velocity
+# net fine on CPU. For fractional-GPU packing (PCRF_SERVE_GPUS=0.25) build from a
+# CUDA Ray base instead, e.g.:
+#   ARG RAY_IMAGE=rayproject/ray:2.55.1-py312-gpu
+# and install onnxruntime-gpu in place of onnxruntime below.
+ARG RAY_IMAGE=rayproject/ray:2.55.1-py312-cpu
+FROM ${RAY_IMAGE}
+
+# rayproject/ray runs as the unprivileged "ray" user under /home/ray. Install
+# into the image's environment; ray[serve] + starlette already ship in the base,
+# but we pin/refresh them with the rest of the serving deps for reproducibility.
+WORKDIR /home/ray/pcrf
+
+# Copy only what the serving install needs first so the layer caches well.
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+# The [serve] extra pulls onnxruntime + fastapi + uvicorn + pydantic. We add
+# ray[serve] explicitly (idempotent on the ray base) so a non-ray base also
+# works. onnxruntime is CPU here; swap to onnxruntime-gpu on a CUDA base.
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir "ray[serve]>=2.30" \
+ && pip install --no-cache-dir ".[serve]"
+
+# Serve entrypoints and the schema helper that serve_ingress imports. The ONNX
+# artifact is not baked into the image. Produce it with `make export`, then mount
+# or stage it at runtime through PCRF_ONNX.
+COPY apps/training/serve_ray.py     apps/training/serve_ray.py
+COPY apps/training/serve_ingress.py apps/training/serve_ingress.py
+COPY apps/training/serve_schema.py  apps/training/serve_schema.py
+
+# Ray Serve HTTP proxy default port.
+EXPOSE 8000
+
+# Default knobs reproduce the single-replica CPU behavior exactly; override any
+# PCRF_SERVE_* at `docker run -e ...` or in the sbatch. PYTHONPATH lets `serve
+# run apps.training.serve_ray:app` import both the pcrf package (installed) and
+# the apps/training scripts (serve_ingress imports serve_ray by bare name).
+ENV PYTHONPATH=/home/ray/pcrf/apps/training:/home/ray/pcrf/src \
+    PCRF_ONNX=/home/ray/pcrf/artifacts/pcrf.onnx \
+    PCRF_SERVE_GPUS=0 \
+    PCRF_SERVE_BATCH=0 \
+    PCRF_SERVE_MIN_REPLICAS=1 \
+    PCRF_SERVE_MAX_REPLICAS=8 \
+    PCRF_SERVE_TARGET_REQUESTS=4
+
+# Launch the root-path Serve app in the foreground. `serve run` blocks, runs the
+# HTTP proxy on 0.0.0.0:8000, and tears down cleanly on SIGTERM.
+CMD ["serve", "run", "--host", "0.0.0.0", "--port", "8000", "apps.training.serve_ray:app"]
