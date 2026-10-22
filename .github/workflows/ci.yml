@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install (CPU torch)
+        run: |
+          python -m pip install -U pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,data,serve]"
+      - name: pytest
+        run: python -m pytest -q
+
+  export-parity:
+    # Export a tiny model to ONNX and check that it matches eager PyTorch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install (CPU torch)
+        run: |
+          python -m pip install -U pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,export]"
+      - name: export a tiny model
+        run: python apps/training/export_onnx.py --epochs 1 --fine 32 --base 16 --out artifacts/pcrf.onnx
+      - name: parity tests
+        run: python -m pytest tests/test_export.py tests/test_onnx_serving.py -q
